@@ -9,25 +9,19 @@ LVGL_SRCFILES := $(ASRCS) $(CSRCS)
 LVGL_OBJFILES := $(patsubst $(CURR_DIR)/%.c,obj/%.o,$(filter %.c,$(CSRCS))) \
                  $(patsubst $(CURR_DIR)/%.S,obj/%.o,$(filter %.S,$(ASRCS)))
 
-$(info    LVGL_OBJFILES is $(LVGL_OBJFILES))
-
 
 all: $(TARGET)
 
-$(TARGET): $(LVGL_OBJFILES) obj/main.o 
+$(TARGET): obj/main.o obj/de_font_montserrat_14.o example-person_small.o lvgl/src/font/lv_font_montserrat_24.c $(LVGL_OBJFILES) 
 	$(CC) $(CFLAGS) $(AFLAGS) $(LDFLAGS) $^ -o $@ $(SDL) -lSDL2 
-
-obj/main.o: main.c
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $^ -o $@  
 
 obj/%.o: %.c 
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@  
+	$(CC) $(CFLAGS) -c $< -o $@ $(SDL) 
 
 obj/%.o: %.S 
 	@mkdir -p $(@D) 
-	$(CC) $(AFLAGS) -c $< -o $@ 
+	$(CC) $(AFLAGS) -c $< -o $@ $(SDL)
 
 clean:
 	rm -f $(TARGET)
