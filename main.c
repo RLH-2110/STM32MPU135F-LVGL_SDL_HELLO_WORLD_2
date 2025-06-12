@@ -9,6 +9,9 @@
 #include "lvgl/lvgl.h"
 #include "lvgl/src/drivers/sdl/lv_sdl_mouse.h"
 
+#define LV_FONT_MONTSERRAT_24 1
+
+
 #define H_RES (480)
 #define V_RES (272)
 
@@ -115,7 +118,7 @@ int main(){
   
   puts("Preparing to exit...");
   pthread_join(fakeLoadrThread,NULL);
-  pthread_join(tick_thread,NULL);
+  pthread_join(tickThread,NULL);
   puts("counter joined");
   lv_indev_delete(lvMouse);
   puts("\"mouse\" deleted");
@@ -155,16 +158,23 @@ void main_screen(void)
 
   static lv_obj_t *tabView; tabView = lv_tabview_create(screen);
   lv_tabview_set_tab_bar_position(tabView, LV_DIR_LEFT);
-  
-  lv_obj_t *tabHome = lv_tabview_add_tab(tabView, "Start");
-  lv_obj_t *tabBio  = lv_tabview_add_tab(tabView, "Bio");
-  lv_obj_t *tabExit = lv_tabview_add_tab(tabView, "Beenden");
+  lv_tabview_set_tab_bar_size(tabView, 80);
+
+  lv_obj_t * tab_buttons = lv_tabview_get_tab_bar(tabView);
+  lv_obj_set_style_bg_color(tab_buttons, lv_palette_darken(LV_PALETTE_GREY, 3), 0);
+  lv_obj_set_style_text_color(tab_buttons, lv_palette_lighten(LV_PALETTE_GREY, 5), 0);
+
+
+  lv_obj_t *tabHome      = lv_tabview_add_tab(tabView, "Start");
+  lv_obj_t *tabBio       = lv_tabview_add_tab(tabView, "Bio");
+  lv_obj_t *tabFeedback  = lv_tabview_add_tab(tabView, "Feedback");
+  lv_obj_t *tabExit      = lv_tabview_add_tab(tabView, "Beenden");
 
 
   static lv_obj_t *profileImg; profileImg = lv_imagebutton_create(tabView);
   lv_imagebutton_set_src(profileImg, LV_IMAGEBUTTON_STATE_RELEASED, NULL, &examplePersonImg, NULL);
-  lv_obj_center(profileImg);
-  //lv_obj_align(profileImg, LV_ALIGN_TOP_RIGHT, -80, -80);
+  //lv_obj_center(profileImg);
+  lv_obj_align(profileImg, LV_ALIGN_TOP_RIGHT, -80, -80);
 
 
   /* events tab and profile image */
@@ -182,19 +192,26 @@ void main_screen(void)
 
   /* bio tab */
 
-    lv_obj_t * bio = lv_spangroup_create(tabBio);
+    lv_obj_t *bio = lv_spangroup_create(tabBio);
     lv_obj_set_width(bio, H_RES - 135);
     lv_obj_set_height(bio, LV_SIZE_CONTENT);
-    lv_obj_center(bio);
+    //lv_obj_center(bio);
+    lv_obj_align(bio, LV_ALIGN_LEFT_MID,0,0);
   
-    lv_span_t * bio1 = lv_spangroup_new_span(bio);
+    lv_span_t *bio1 = lv_spangroup_new_span(bio);
     lv_span_set_text(bio1, "Lorum Ipsum ");
     lv_style_set_text_color(lv_span_get_style(bio1), lv_palette_main(LV_PALETTE_RED));
     lv_style_set_text_font(lv_span_get_style(bio1),  &lv_font_montserrat_24);
 
-    lv_span_t * bio2 = lv_spangroup_new_span(bio);
+    lv_span_t *bio2 = lv_spangroup_new_span(bio);
     lv_span_set_text(bio2, "dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.");
 
+  /* feedbcak tab */
+    
+    lv_obj_t *fbLabel = lv_label_create(tabFeedback);
+    lv_label_set_text(fbLabel,"Feedback:");
+
+    
 
   lv_screen_load_anim(screen,LV_SCR_LOAD_ANIM_NONE,0,0,true);
 }
