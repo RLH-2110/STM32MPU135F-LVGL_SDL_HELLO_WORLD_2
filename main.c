@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
 
 #include "lvgl/lvgl.h"
 #include "lvgl/src/drivers/sdl/lv_sdl_mouse.h"
@@ -21,7 +23,7 @@
 #define MICROSECOND_TO_MILISECOND_RATE 1000
 
 extern const lv_font_t lv_font_montserrat_24;
-extern const lv_font_t deFontMontserrat14;
+extern const lv_font_t de_font_montserrat_14;
 extern const lv_image_dsc_t examplePersonImg;
 
 /* lvgl stuff and threats */
@@ -43,6 +45,8 @@ void main_screen(void);
 void tab_view_value_changed_cb(lv_event_t *e);
 void profile_img_click_cb(lv_event_t *e);
 void feedback_send_button_click_cb(lv_event_t *e);
+void contact_page_switch_cb(lv_event_t *e);
+void contact_page_0_options_changed_cb(lv_event_t *e);
 
 /* structs */
 
@@ -54,6 +58,18 @@ typedef struct two_pointers{ /* for callbacks, if we need to pass 2 thigns */
 #define TWO_PTR_INDEX p1
 #define TWO_PTR_LV_OBJ_T p2
 
+                   /* used to pass contact tab data to callbacks*/
+typedef struct tabContact_data{
+  lv_obj_t *contactRightButton;
+  lv_obj_t *contactLeftButton;
+  int page;
+  lv_obj_t *page0;
+  lv_obj_t *page1;
+  bool getDateError;
+} tabContact_data;
+
+
+
 /* other */
 lv_style_t germanFontStyle; /* style that includes german symbols */
 
@@ -62,6 +78,7 @@ lv_style_t germanFontStyle; /* style that includes german symbols */
 #define FAKE_LOADING_TIME_VARIATION_MS 800
 #define FAKE_LOADING_TIME_SPEED_MS 10000 /* time till it loops */
 #define FAKE_LOADING_TIME_SPEED_VARIATION_MS 1200
+
 
 lv_obj_t *chart = NULL;
 lv_chart_series_t *chartSeries;
@@ -74,6 +91,26 @@ time_t nextUpdateTarget;
 #define CHART_RANDOM_NEGATIVE_RANGE 50 /* this one does not count 0*/
 #define CHART_INTERTIA 2.5 /* bigger values = less intertia. can't be 0! */
 uint32_t chart_update(uint32_t currPoint, uint32_t inertia);
+#define CHART_SCALE_TICKS 9
+#define CHART_SCALE_TICK_EVERY 2
+static const char * chartScaleLabels[6] = {"0 ¢", "500 ¢", "1000 ¢", "1500 ¢", "2000 ¢", NULL};
+
+
+const char *emailPrivat = "max.musterman@com.gmail";
+const char *email = "geschäftlich.musterman@gmail.su";
+const char *telPrivat = "+850 193 944 1526";
+#define TEL_COUNTRIES 3
+const char *tel[TEL_COUNTRIES] = {"+850 193 755 7086","+1 684-733-7310","+49 15647 144756"};
+const char countries[] = "Korea\nSamoa\nDeutchland";
+#define EMAIL_BUFF_SIZE 50
+char emailBuff[EMAIL_BUFF_SIZE] = {0};
+#define TEL_BUFF_SIZE 40
+char telBuff[TEL_BUFF_SIZE] = {0};
+
+#define CONCAT(str1,str2,buff,buffSize) {if (concat(str1,str2,buff,buffSize) == NULL) { puts("contat had an error!"); noStop = 0; }}
+
+/* sets random dates in the current month based on deterministic rng. returns false if the current date cant be determined */
+bool set_calandar_dates(lv_obj_t *calendar);
 
 /* wraps rand(), to avoid divisions by 0 */
 unsigned int get_rand(unsigned int max_value_exclusive){
@@ -81,6 +118,18 @@ unsigned int get_rand(unsigned int max_value_exclusive){
     return 0;
   return rand() % max_value_exclusive;
 }
+
+
+/* concatinates 2 strings without
+  s1: first string
+  s2: second string
+  buffer: buffer where the combined string is safed
+  bufferSize: size of the bufer
+
+  returns: pointer to buffer on success, NULL on failire
+*/
+char* concat(const char *s1, const char *s2, char* buffer, size_t bufferSize);
+
 
 /* signal handler */
 void on_termination(int signal){
@@ -94,11 +143,10 @@ void on_termination(int signal){
 #define OBJ_POS_HALF_LEFT(obj)  (lv_obj_get_x(obj) - lv_obj_get_width(obj) / 2) /* gets position of the object if it were moved left by half the objects size */
 #define OBJ_POS_HALF_RIGHT(obj) (lv_obj_get_x(obj) + lv_obj_get_width(obj) / 2)
 
-#define OBJ_POS_FULL_RIGHT(obj) (lv_obj_get_x(obj) + lv_obj_get_width(obj)) /* gets position of the objecz, if it were moved right by the size of the object */
+#define OBJ_POS_FULL_RIGHT(obj) (lv_obj_get_x(obj) + lv_obj_get_width(obj)) /* gets position of the object, if it were moved right by the size of the object */
 #define OBJ_POS_FULL_LEFT(obj) (lv_obj_get_x(obj) - lv_obj_get_width(obj))
 #define OBJ_POS_FULL_UP(obj) (lv_obj_get_y(obj) - lv_obj_get_height(obj))
 #define OBJ_POS_FULL_DOWN(obj) (lv_obj_get_y(obj) + lv_obj_get_height(obj))
-
 
 int main(){
   srand(time(NULL));
@@ -117,6 +165,16 @@ int main(){
     puts("Display error!");
     return 1;
   }
+
+# define BYTES_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565))
+# define DISPLAY_BUFF_SIZE H_RES * V_RES * BYTES_PER_PIXEL
+//# define DISPLAY_BUFF_SIZE H_RES * V_RES / 9 * BYTES_PER_PIXEL
+  static uint8_t displayBuff1[DISPLAY_BUFF_SIZE];
+  static uint8_t displayBuff2[DISPLAY_BUFF_SIZE];
+  lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
+  //lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+
   lvMouse = lv_sdl_mouse_create();
 
   LV_IMAGE_DECLARE(examplePersonImg);  
@@ -124,7 +182,7 @@ int main(){
   /* gui stuff here */
 
   lv_style_init(&germanFontStyle);
-  lv_style_set_text_font(&germanFontStyle, &deFontMontserrat14);
+  lv_style_set_text_font(&germanFontStyle, &de_font_montserrat_14);
 
   fake_loading_screen();
 
@@ -147,7 +205,6 @@ int main(){
           lv_chart_set_next_value(chart,chartSeries,chartCurrPoint);
  
           nextUpdateTarget += CHART_UPDATE_RATE_S;
-          printf("new point %5d | new target: %d\n",chartCurrPoint,nextUpdateTarget);
         }
     }
     uint32_t timeTillNext = lv_timer_handler();
@@ -246,26 +303,38 @@ void main_screen(void)
 
     lv_obj_set_scrollbar_mode(tabHome, LV_SCROLLBAR_MODE_OFF);
 
+    static lv_obj_t *chartLabel; chartLabel = lv_label_create(tabHome);
+    if (CHART_UPDATE_RATE_S == 1)
+      lv_label_set_text(chartLabel,"Geldverlust in cent jede Sekunde:");
+    else
+      lv_label_set_text_fmt(chartLabel,"Geldverlust in cent jede %d Sekunden:",CHART_UPDATE_RATE_S);
+    //lv_obj_align_to(chartLabel,chart, LV_ALIGN_OUT_TOP_LEFT,0,-5);
+    lv_obj_align(chartLabel, LV_ALIGN_OUT_TOP_LEFT,0,0);
+ 
     static lv_obj_t *chartScale; 
+
     /* might needs to be reworked when multiple screens exist */
     if (chart == NULL){
       chart = lv_chart_create(tabHome);
-      lv_obj_center(chart);
+      lv_obj_align(chart, LV_ALIGN_CENTER, 0,15);
       lv_obj_set_height(chart, V_RES - 50);
       lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, CHART_MIN_VALUE, CHART_MAX_VALUE);
+      lv_obj_set_scrollbar_mode(chart, LV_SCROLLBAR_MODE_OFF);
+      lv_chart_set_div_line_count(chart,5,5);
       lv_obj_update_layout(chart);
 
       chartSeries = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_DEEP_ORANGE), LV_CHART_AXIS_PRIMARY_Y);
       nextUpdateTarget = time(NULL);
 
-      printf("chart done.      time target: %d\n",nextUpdateTarget);
-      
       chartScale = lv_scale_create(chart);
       lv_scale_set_mode(chartScale,LV_SCALE_MODE_VERTICAL_RIGHT);
       lv_scale_set_range(chartScale,CHART_MIN_VALUE,CHART_MAX_VALUE);
-      lv_scale_set_total_tick_count(chartScale, 10);
-      lv_scale_set_major_tick_every(chartScale, 5);
+      lv_scale_set_total_tick_count(chartScale, CHART_SCALE_TICKS);
+      lv_scale_set_major_tick_every(chartScale, CHART_SCALE_TICK_EVERY);
+      lv_obj_set_style_pad_all(chartScale, 0, 0);
       lv_obj_set_size(chartScale,25, lv_obj_get_height(chart) - 20);
+      lv_scale_set_text_src(chartScale, chartScaleLabels);
+      lv_obj_add_style(chartScale, &germanFontStyle, 0);
     }
     
           
@@ -326,6 +395,100 @@ void main_screen(void)
 
     lv_obj_add_event_cb(fbSendButton, feedback_send_button_click_cb, LV_EVENT_CLICKED, fbSliderSatisfaction);
 
+
+  /* Contact tab */
+
+    lv_obj_set_scrollbar_mode(tabContact, LV_SCROLLBAR_MODE_OFF);
+    
+    static tabContact_data contactTabD = { 0 }; /* initalize to null pointer, in case we forget to set something */
+    contactTabD.page = 0;
+    
+    contactTabD.page0 = lv_obj_create(tabContact);   
+    lv_obj_remove_style_all(contactTabD.page0);
+    lv_obj_set_size(contactTabD.page0, lv_pct(100) , lv_pct(85));
+    lv_obj_align(contactTabD.page0, LV_ALIGN_TOP_MID, 0, 0);
+
+    contactTabD.page1 = lv_obj_create(tabContact);   
+    lv_obj_remove_style_all(contactTabD.page1);
+    lv_obj_set_size(contactTabD.page1, lv_pct(100) , lv_pct(85));
+    lv_obj_align(contactTabD.page1, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_move_background( contactTabD.page1 );
+    lv_obj_move_foreground( contactTabD.page0 );
+
+    /* page 1 */   
+    static lv_obj_t *contactCalandar; contactCalandar = lv_calendar_create(contactTabD.page1);
+    lv_obj_align(contactCalandar, LV_ALIGN_CENTER, 0 ,15);
+    lv_obj_add_flag(contactCalandar, LV_OBJ_FLAG_HIDDEN);
+
+    static lv_obj_t *contactCalandarLbl; contactCalandarLbl = lv_label_create(contactTabD.page1);
+    lv_obj_align_to(contactCalandarLbl, contactCalandar, LV_ALIGN_OUT_TOP_LEFT, 0, 0);
+    lv_label_set_text(contactCalandarLbl, "Erreichbare Tage");
+    lv_obj_add_flag(contactCalandarLbl, LV_OBJ_FLAG_HIDDEN);
+
+    
+    contactTabD.getDateError = !(set_calandar_dates(contactCalandar));
+    
+
+    /* all pages */
+
+    contactTabD.contactRightButton = lv_button_create(tabContact);
+    lv_obj_update_layout(contactTabD.contactRightButton);    
+    lv_obj_align(contactTabD.contactRightButton, LV_ALIGN_BOTTOM_MID,  5 + (lv_obj_get_width(contactTabD.contactRightButton) / 2) ,0);
+
+    static lv_obj_t *contactRightButtonLbl; contactRightButtonLbl = lv_label_create( contactTabD.contactRightButton);
+    lv_label_set_text(contactRightButtonLbl, ">");
+
+    contactTabD.contactLeftButton= lv_button_create(tabContact);
+    lv_obj_update_layout(contactTabD.contactLeftButton);    
+    lv_obj_align(contactTabD.contactLeftButton, LV_ALIGN_BOTTOM_MID,  -5 - (lv_obj_get_width(contactTabD.contactLeftButton) / 2) ,0);
+
+    static lv_obj_t *contactLeftButtonLbl; contactLeftButtonLbl = lv_label_create( contactTabD.contactLeftButton);
+    lv_label_set_text(contactLeftButtonLbl, "<"); 
+
+    lv_obj_add_event_cb(contactTabD.contactRightButton, contact_page_switch_cb, LV_EVENT_CLICKED, &contactTabD);
+    lv_obj_add_event_cb(contactTabD.contactLeftButton, contact_page_switch_cb, LV_EVENT_CLICKED, &contactTabD);
+    lv_obj_set_style_bg_color(contactTabD.contactRightButton, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD.contactRightButton, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_bg_color(contactTabD.contactLeftButton, lv_palette_main(LV_PALETTE_BLUE_GREY), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD.contactLeftButton, lv_palette_main(LV_PALETTE_BLUE_GREY), 0);
+
+    /* page 0 */
+    
+    static lv_obj_t *contactContactInfoLbl; contactContactInfoLbl = lv_label_create(contactTabD.page0);
+    lv_obj_align(contactContactInfoLbl, LV_ALIGN_TOP_MID, 0 ,10);
+    lv_label_set_text(contactContactInfoLbl,"Kontaktinfo: ");
+
+     
+    static lv_obj_t *contactCountryDropDown; contactCountryDropDown = lv_dropdown_create(contactTabD.page0);
+    lv_obj_align_to(contactCountryDropDown, contactContactInfoLbl, LV_ALIGN_OUT_BOTTOM_LEFT, 0 ,10);
+    lv_dropdown_set_options(contactCountryDropDown,countries);
+    lv_obj_add_event_cb(contactCountryDropDown,contact_page_0_options_changed_cb, LV_EVENT_VALUE_CHANGED, &contactTabD);
+
+    static lv_obj_t *contactPrivateCheckb; contactPrivateCheckb = lv_checkbox_create(contactTabD.page0);
+    lv_obj_update_layout(contactPrivateCheckb);
+    lv_obj_align_to(contactPrivateCheckb,contactCountryDropDown, LV_ALIGN_OUT_LEFT_MID, 0 ,0); 
+    lv_obj_set_x(contactPrivateCheckb,lv_obj_get_x(contactPrivateCheckb)); /* position update did not happen yet, so we are aligning this to the y position of the dropdown, but we keep your x position */
+    lv_checkbox_set_text(contactPrivateCheckb, "privat");
+    lv_obj_add_event_cb(contactPrivateCheckb,contact_page_0_options_changed_cb, LV_EVENT_VALUE_CHANGED, &contactTabD);
+
+#   define CONTACT_EMAIL_LABEL_INDEX 1
+    static lv_obj_t *contactEmailLbl; contactEmailLbl = lv_label_create(contactTabD.page0);
+    lv_obj_align(contactEmailLbl, LV_ALIGN_LEFT_MID, 10, 10);
+    CONCAT("Email: ",email,emailBuff,EMAIL_BUFF_SIZE);
+    lv_label_set_text(contactEmailLbl,emailBuff);
+    lv_obj_add_style(contactEmailLbl, &germanFontStyle, 0);
+
+#   define CONTACT_TEL_LABEL_INDEX 2
+    static lv_obj_t *contactTelLbl; contactTelLbl = lv_label_create(contactTabD.page0);
+    lv_obj_align_to(contactTelLbl,contactEmailLbl, LV_ALIGN_OUT_LEFT_BOTTOM, 0 , 20);
+    CONCAT("Tel: ",tel[0],telBuff,TEL_BUFF_SIZE);
+    lv_label_set_text(contactTelLbl,telBuff);
+    lv_obj_update_layout(contactEmailLbl);
+    lv_obj_set_x(contactTelLbl, lv_obj_get_x(contactEmailLbl)); /* set to same x as email (should be done with the align_to, but that does not like to rn) */  
+ 
+  /* tabs end*/
+
   lv_screen_load_anim(screen,LV_SCR_LOAD_ANIM_NONE,0,0,true);
 }
 
@@ -371,6 +534,101 @@ void feedback_send_button_click_cb(lv_event_t *e)
   
 }
 
+void contact_page_switch_cb(lv_event_t *e)
+{
+  lv_obj_t *callerBtn = lv_event_get_target(e);
+  tabContact_data *contactTabD = lv_event_get_user_data(e);  
+
+  #define page contactTabD->page
+
+  printf("page cb | page %d | btn: %p | left %p\n",page,callerBtn,contactTabD->contactLeftButton);
+  /* filter out button presses that would do nothing */
+  if(page == 0 && callerBtn == contactTabD->contactLeftButton)
+    return; 
+  if(page == 1 && callerBtn == contactTabD->contactRightButton)
+    return; 
+  puts ("hi");
+
+  if (page == 0){
+    page = 1;
+    lv_obj_move_background( contactTabD->page0 );
+    lv_obj_move_foreground( contactTabD->page1 );
+    lv_obj_set_style_bg_color(contactTabD->contactRightButton, lv_palette_main(LV_PALETTE_BLUE_GREY), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD->contactRightButton, lv_palette_main(LV_PALETTE_BLUE_GREY), 0);
+    lv_obj_set_style_bg_color(contactTabD->contactLeftButton, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD->contactLeftButton, lv_palette_main(LV_PALETTE_BLUE), 0);
+
+    for (int i = 0; i < lv_obj_get_child_count(contactTabD->page0); i++)
+      lv_obj_add_flag(  lv_obj_get_child(contactTabD->page0,i), LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < lv_obj_get_child_count(contactTabD->page1); i++)
+      lv_obj_clear_flag(  lv_obj_get_child(contactTabD->page1,i), LV_OBJ_FLAG_HIDDEN);
+    
+    if (contactTabD->getDateError){
+       static lv_obj_t *getDateErrorMsg; getDateErrorMsg = lv_msgbox_create(NULL);
+       lv_msgbox_add_title(getDateErrorMsg,"Fehler");
+       lv_msgbox_add_close_button(getDateErrorMsg);
+       lv_msgbox_add_text(getDateErrorMsg,"Datum konnte nicht herausgefunden werden!\nKalender ist deaktiviert.");
+    }
+
+  }else /* page == 1 */ {
+    page = 0;
+    lv_obj_move_background( contactTabD->page1 );
+    lv_obj_move_foreground( contactTabD->page0 );
+    lv_obj_set_style_bg_color(contactTabD->contactRightButton, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD->contactRightButton, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_bg_color(contactTabD->contactLeftButton, lv_palette_main(LV_PALETTE_BLUE_GREY), LV_STATE_DEFAULT | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(contactTabD->contactLeftButton, lv_palette_main(LV_PALETTE_BLUE_GREY), 0);
+
+    for (int i = 0; i < lv_obj_get_child_count(contactTabD->page0); i++)
+      lv_obj_clear_flag(  lv_obj_get_child(contactTabD->page0,i), LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < lv_obj_get_child_count(contactTabD->page1); i++)
+      lv_obj_add_flag(  lv_obj_get_child(contactTabD->page1,i), LV_OBJ_FLAG_HIDDEN);
+  }
+  #undef page
+}
+
+void contact_page_0_options_changed_cb(lv_event_t *e){
+
+  lv_obj_t *page0 = ((tabContact_data*)lv_event_get_user_data(e))->page0;
+  if (page0 == NULL) { 
+    puts("contact_page_0_options_changed_cb: no page0!"); 
+    return;
+  }
+
+  lv_obj_t *dropdownCountry = lv_obj_get_child_by_type(page0, 0, &lv_dropdown_class); 
+  lv_obj_t *checkboxPrivate = lv_obj_get_child_by_type(page0, 0, &lv_checkbox_class); 
+
+  lv_obj_t *emailLbl = lv_obj_get_child_by_type(page0, CONTACT_EMAIL_LABEL_INDEX, &lv_label_class); 
+  lv_obj_t *telLbl = lv_obj_get_child_by_type(page0, CONTACT_TEL_LABEL_INDEX, &lv_label_class); 
+
+ if (lv_obj_get_state(checkboxPrivate) & LV_STATE_CHECKED){
+   lv_obj_add_state(dropdownCountry, LV_STATE_DISABLED);
+
+   CONCAT("Email: ",emailPrivat,emailBuff,EMAIL_BUFF_SIZE);
+   CONCAT("Tel: ",telPrivat,telBuff,EMAIL_BUFF_SIZE); 
+
+   lv_label_set_text(emailLbl,emailBuff);
+   lv_label_set_text(telLbl,telBuff);
+
+   return;
+ }
+ lv_obj_clear_state(dropdownCountry, LV_STATE_DISABLED); 
+
+ int countryIndex = lv_dropdown_get_selected(dropdownCountry); 
+
+ if (countryIndex > TEL_COUNTRIES){
+   printf("tel id %d is out of scope!\n",countryIndex);
+   countryIndex = 0;
+ }
+   
+ CONCAT("Email: ",email,emailBuff,EMAIL_BUFF_SIZE);
+ CONCAT("Tel: ",tel[countryIndex],telBuff,EMAIL_BUFF_SIZE);
+ 
+ lv_label_set_text(emailLbl,emailBuff);
+ lv_label_set_text(telLbl,telBuff);
+}
+
+
 /* other functions */
 static void *tick_thread(void* data) {
   (void) data;
@@ -378,6 +636,47 @@ static void *tick_thread(void* data) {
     usleep(LVGL_DESIRED_TICK_INCREASE_MS * MICROSECOND_TO_MILISECOND_RATE);
     lv_tick_inc(LVGL_DESIRED_TICK_INCREASE_MS); /*Tell LVGL how many time has eslaped in ms*/
   }
+}
+
+/* sets random dates in the current month based on deterministic rng. returns false if the current date cant be determined */
+bool set_calandar_dates(lv_obj_t *calendar){
+  time_t now = time(NULL);
+  struct tm *date = localtime(&now);
+  if (date == NULL){
+    puts("could not get date!");
+    return false;
+  }
+
+  /* tm_year + 1900, because tm_year is years since 1900. tm_month + 1 because tm_month is 0-11 and not 1-12*/
+  lv_calendar_set_today_date(calendar,date->tm_year + 1900,date->tm_mon + 1, date->tm_mday);
+  lv_calendar_set_month_shown(calendar,date->tm_year + 1900,date->tm_mon + 1);
+
+  /*deterministic randomness*/
+  srand(date->tm_year * 100 + date->tm_mon);
+ 
+  #define CALANDER_RANDOM_DAYS 8
+  static lv_calendar_date_t days[CALANDER_RANDOM_DAYS+1] = { 0 }; 
+  #define CALANDER_RANDOM_MAX_DAY 27
+  bool dayTaken[CALANDER_RANDOM_MAX_DAY+2] = { 0 };
+
+  size_t i = 0;
+  while(i < CALANDER_RANDOM_DAYS){
+     int random = get_rand(CALANDER_RANDOM_MAX_DAY) + 1;    
+     if (dayTaken[random])
+       continue;
+
+     dayTaken[random] = true;
+     days[i].year = date->tm_year + 1900;
+     days[i].month = date->tm_mon + 1;
+     days[i].day = random;
+     i++;
+  }
+
+  lv_calendar_set_highlighted_dates(calendar,days,i);
+
+  /*get back to pseudo randomness*/
+  srand(time(NULL));
+  return true;
 }
 
 static void load_main_screen(void* data){
@@ -389,3 +688,22 @@ static void *load_main_screen_thread(void* data) {
   lv_async_call(load_main_screen,NULL);
 }
 
+/* concatinates 2 strings without 
+  s1: first string
+  s2: second string
+  buffer: buffer where the combined string is safed
+  bufferSize: size of the bufer
+
+  returns: pointer to buffer on success, NULL on failire
+*/
+char* concat(const char *s1, const char *s2, char* buffer, size_t bufferSize)
+{
+    const size_t len1 = strlen(s1);
+    const size_t len2 = strlen(s2);
+    if (len1 + len2 + 1 > bufferSize || buffer == NULL)
+      return NULL;
+
+    memcpy(buffer, s1, len1);
+    memcpy(buffer + len1, s2, len2 + 1); // +1 to copy the null-terminator
+    return buffer;
+}
