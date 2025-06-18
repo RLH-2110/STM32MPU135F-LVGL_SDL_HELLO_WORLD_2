@@ -1,6 +1,10 @@
 include lvgl/lvgl.mk
 
-TARGET := lvglshowcase 
+TARGET := drmlvglshowcase 
+
+CFLAGS += $(shell pkg-config --cflags libdrm)
+LIBDRM += $(shell pkg-config --libs libdrm)
+CFLAGS += -Wno-trigraphs
 
 CURR_DIR = $(shell pwd)
 
@@ -16,15 +20,15 @@ OTHER_OBJ := obj/main.o obj/de_font_montserrat_14.o obj/example-person_small.o o
 all: $(TARGET)
 
 $(TARGET): $(OTHER_OBJ) $(LVGL_OBJFILES) 
-	$(CC) $(CFLAGS) $(AFLAGS) $(LDFLAGS) $^ -o $@ $(SDL) -lSDL2 
+	$(CC) $(CFLAGS) $(AFLAGS) $(LDFLAGS) $^ $(LIBDRM) -o $@ 
 
 obj/%.o: %.c 
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@ $(SDL) 
+	$(CC) $(CFLAGS) -c $< -o $@
 
 obj/%.o: %.S 
 	@mkdir -p $(@D) 
-	$(CC) $(AFLAGS) -c $< -o $@ $(SDL)
+	$(CC) $(AFLAGS) -c $< -o $@
 
 
 obj/lvgl/src/font/lv_font_montserrat_24.o: lvgl/src/font/lv_font_montserrat_24.c

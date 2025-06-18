@@ -10,8 +10,8 @@
 #   LICENSE
 
 FILESEXTRAPATHS:prepend := "${THISDIR}:"
-SRC_URI = "file://lvgl-showcase/"
-S = "${WORKDIR}/lvgl-showcase"
+SRC_URI = "file://lvgl-drm/"
+S = "${WORKDIR}/lvgl-drm"
 
 LICENSE = "CC0-1.0"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=65d3616852dbf7b1a6d4b53b00626032"
@@ -19,7 +19,7 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=65d3616852dbf7b1a6d4b53b00626032"
 inherit pkgconfig
 # NOTE: no Makefile found, unable to determine what needs to be done
 
-DEPENDS += "libsdl2"
+DEPENDS += "libdrm"
 
 do_configure () {
 	# Specify any needed configure commands here
@@ -39,6 +39,6 @@ do_compile () {
 do_install () {
 	# Specify install commands here
 	install -d ${D}/usr/bin
-        install -m 0755 lvglshowcase ${D}${bindir}
+  install -m 0755 drmlvglshowcase ${D}${bindir}
 }
  

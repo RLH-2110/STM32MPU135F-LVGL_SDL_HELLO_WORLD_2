@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 
 #include "lvgl/lvgl.h"
 #include "lvgl/src/drivers/sdl/lv_sdl_mouse.h"
@@ -27,14 +28,14 @@ extern const lv_font_t de_font_montserrat_14;
 extern const lv_image_dsc_t examplePersonImg;
 
 /* lvgl stuff and threats */
-static lv_display_t *disp;
-static lv_indev_t *lvMouse;
+lv_display_t *disp;
+lv_indev_t *lvMouse;
 
-static pthread_t tickThread;
+pthread_t tickThread;
 static void* tick_thread(void* data);
 volatile sig_atomic_t noStop = 1; /* programms runs as long as this is set */
 
-static pthread_t fakeLoadrThread;
+pthread_t fakeLoadrThread;
 static void* load_main_screen_thread(void* data);
 
 /* screens */
@@ -73,7 +74,7 @@ typedef struct tabContact_data{
 /* other */
 lv_style_t germanFontStyle; /* style that includes german symbols */
 
-            /* note: the defines that end in `VARIATION_MS` should have values lower than RAND_MAX */ 
+            /* note: the defines that end in `VARIATION_MS` should have values lower than RAND_MAX */
 #define FAKE_LOADING_TIME_MS 1500
 #define FAKE_LOADING_TIME_VARIATION_MS 800
 #define FAKE_LOADING_TIME_SPEED_MS 10000 /* time till it loops */
@@ -93,7 +94,7 @@ time_t nextUpdateTarget;
 uint32_t chart_update(uint32_t currPoint, uint32_t inertia);
 #define CHART_SCALE_TICKS 9
 #define CHART_SCALE_TICK_EVERY 2
-static const char * chartScaleLabels[6] = {"0 ¢", "500 ¢", "1000 ¢", "1500 ¢", "2000 ¢", NULL};
+const char * chartScaleLabels[6] = {"0 ¢", "500 ¢", "1000 ¢", "1500 ¢", "2000 ¢", NULL};
 
 
 const char *emailPrivat = "max.musterman@com.gmail";
@@ -101,16 +102,17 @@ const char *email = "geschäftlich.musterman@gmail.su";
 const char *telPrivat = "+850 193 944 1526";
 #define TEL_COUNTRIES 3
 const char *tel[TEL_COUNTRIES] = {"+850 193 755 7086","+1 684-733-7310","+49 15647 144756"};
-const char countries[] = "Korea\nSamoa\nDeutchland";
+
+const char *countries = "Korea\nSamoa\nDeutchland";
 #define EMAIL_BUFF_SIZE 50
-char emailBuff[EMAIL_BUFF_SIZE] = {0};
+char emailBuff[EMAIL_BUFF_SIZE] = { 0 };
 #define TEL_BUFF_SIZE 40
-char telBuff[TEL_BUFF_SIZE] = {0};
+char telBuff[TEL_BUFF_SIZE] = { 0 };
 
 #define CONCAT(str1,str2,buff,buffSize) {if (concat(str1,str2,buff,buffSize) == NULL) { puts("contat had an error!"); noStop = 0; }}
 
 /* sets random dates in the current month based on deterministic rng. returns false if the current date cant be determined */
-bool set_calandar_dates(lv_obj_t *calendar);
+extern bool set_calandar_dates(lv_obj_t *calendar);
 
 /* wraps rand(), to avoid divisions by 0 */
 unsigned int get_rand(unsigned int max_value_exclusive){
@@ -148,8 +150,76 @@ void on_termination(int signal){
 #define OBJ_POS_FULL_UP(obj) (lv_obj_get_y(obj) - lv_obj_get_height(obj))
 #define OBJ_POS_FULL_DOWN(obj) (lv_obj_get_y(obj) + lv_obj_get_height(obj))
 
+#include <drm_fourcc.h>
+#include <fcntl.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include <stdint.h>
+
+/* drm */
+
+# define BYTES_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565))
+# define DISPLAY_BUFF_SIZE H_RES * V_RES * BYTES_PER_PIXEL
+
+bool setup_drm(void);
+void cleanup_drm(void);
+static uint32_t find_crtc(int drm_fd, drmModeRes *res, drmModeConnector *conn, uint32_t *taken_crtcs);
+
+drmModeConnector *drm_conn = NULL;
+uint32_t crtc = 0;
+int drm_fd = -1;
+
+uint8_t *fb0_data;
+uint8_t *fb1_data;
+struct drm_mode_create_dumb fb0;
+struct drm_mode_create_dumb fb1;
+uint32_t fb0_id;
+uint32_t fb1_id;
+
+drmModeCrtc *saved = NULL;
+
+void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
+{
+    uint16_t * buff16 = (uint16_t *)px_map; /* 16 bit (RGB565) */
+    int32_t x, y;
+    for(y = area->y1; y <= area->y2; y++) {
+        for(x = area->x1; x <= area->x2; x++) {
+            int32_t yOffset = H_RES * y * BYTES_PER_PIXEL;
+            fb0_data[x + yOffset + 0] = (*buff16 & 0xFF00) >> 8;
+            fb0_data[x + yOffset + 1] =  *buff16 & 0x00FF;
+            buff16++;
+        }
+    }
+
+    lv_display_flush_ready(display);
+}
+
+
 int main(){
   srand(time(NULL));
+
+  puts("killing weston...");
+  int code = system("pkill weston");
+  if (code != 0){
+    printf("could not kill weston | code: %d, aborting\n",code);
+    _Exit(1); /* exit without atexit */
+  }
+
+  int i;
+  for (i = 0; i < 50; ++i) { /* Wait up to ~5 seconds */
+    if (system("pidof weston > /dev/null") != 0) {
+      break; /* weston is gone */
+    }
+    usleep(100 * 1000); /* sleep 100ms */
+  }
+  if (i == 50) {
+    printf("weston did not terminate in time, aborting\n");
+    _Exit(1);
+  }
+
+  if (setup_drm() == false){
+    goto exit_early;
+  }
 
   lv_init();
 
@@ -160,22 +230,21 @@ int main(){
     return 1;
   }
 
-  disp = lv_sdl_window_create(H_RES, V_RES);
+  disp = lv_display_create(H_RES, V_RES);
   if (disp == NULL){
     puts("Display error!");
     return 1;
   }
 
-# define BYTES_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565))
-# define DISPLAY_BUFF_SIZE H_RES * V_RES * BYTES_PER_PIXEL
-//# define DISPLAY_BUFF_SIZE H_RES * V_RES / 9 * BYTES_PER_PIXEL
+  lv_display_set_flush_cb(disp, flush_cb);
+
+
   static uint8_t displayBuff1[DISPLAY_BUFF_SIZE];
   static uint8_t displayBuff2[DISPLAY_BUFF_SIZE];
   lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
-  //lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
 
-  lvMouse = lv_sdl_mouse_create();
+  //lvMouse = lv_sdl_mouse_create();
 
   LV_IMAGE_DECLARE(examplePersonImg);  
 
@@ -195,7 +264,7 @@ int main(){
   
   int32_t chartInertia = 0;
   int32_t chartCurrPoint = CHART_START_VALUE;
-  int i = 0;
+  i = 0;
   while(noStop){
     if (chart != NULL){
 	if (time(NULL) > nextUpdateTarget){
@@ -215,15 +284,26 @@ int main(){
   pthread_join(fakeLoadrThread,NULL);
   pthread_join(tickThread,NULL);
   puts("counter joined");
-  lv_indev_delete(lvMouse);
-  puts("\"mouse\" deleted");
+  //lv_indev_delete(lvMouse);
+  //puts("\"mouse\" deleted");
   lv_disp_remove(disp);
   puts("display removed");
-  lv_sdl_quit();
-  puts("quit sdl");
   lv_deinit();
-  puts("Exiting...");
+  puts("deinitalized lvgl");
 
+  puts("cleaning up drm stuff...");
+  cleanup_drm();
+  puts("drm cleanup done");
+
+  drmDropMaster(drm_fd);
+  puts("dropped master");
+
+exit_early:
+  system("mkdir -p $XDG_RUNTIME_DIR");
+  system("weston &");
+
+  puts("restarted weston");
+  puts("Exiting...");
 
   return 0;
 
@@ -706,4 +786,199 @@ char* concat(const char *s1, const char *s2, char* buffer, size_t bufferSize)
     memcpy(buffer, s1, len1);
     memcpy(buffer + len1, s2, len2 + 1); // +1 to copy the null-terminator
     return buffer;
+}
+
+
+/* false = failed | true = success */
+bool setup_drm(void){
+
+
+  drm_fd = open("/dev/dri/card0", O_RDWR | O_NONBLOCK);
+  if (drm_fd < 0){
+    perror("/dev/dri/card0 error");
+    return false;
+  }
+
+  /* get drm resources */
+
+  drmModeRes *resources = drmModeGetResources(drm_fd);
+        if (resources == NULL) {
+                perror("drmModeGetResources error");
+                return false;
+        }
+  if (resources->count_connectors == 0){
+    puts("no connectors!");
+    return false;
+  }
+
+  if (resources->count_connectors > 1){
+    puts("more connectors than expected! programm will only try to use the first one.");
+  }
+
+
+  /* get connector */
+
+  //struct connector *conn = NULL;
+  drm_conn = drmModeGetConnector(drm_fd, resources->connectors[0]);
+  if (drm_conn == NULL){
+    puts("error: connector was NULL!");
+    goto drm_resources_cleanup;
+  }
+
+  if (drm_conn->count_modes == 0){
+    puts("error: no valid display modes");
+    goto drm_resources_conn_cleanup;
+  }
+
+  if (drm_conn->connection != DRM_MODE_CONNECTED){
+    puts("error connector is not connected!");
+    goto drm_resources_conn_cleanup;
+  }
+
+  /* check resolution */
+  if (drm_conn->modes[0].hdisplay != H_RES || drm_conn->modes[0].vdisplay != V_RES){
+    printf("ERROR: resulution is not what is expected.\n\tExpected: %d x %d\n\tGot     : %d x %x\n",H_RES, V_RES, drm_conn->modes[0].hdisplay, drm_conn->modes[0].vdisplay);
+    goto drm_resources_conn_cleanup;
+  }
+
+
+  /* get crtc */
+  uint32_t taken_crtcs = 0;
+  crtc = find_crtc(drm_fd,resources,drm_conn,&taken_crtcs);
+  if (crtc == 0){
+    puts("no crtc found!");
+    goto drm_resources_conn_cleanup;
+  }
+
+
+  /* framebuffer 0 */
+  fb0.width = H_RES;
+  fb0.height = V_RES;
+  fb0.bpp = BYTES_PER_PIXEL * 8;
+
+  drmIoctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &fb0);
+
+  uint32_t handles[4] = { fb0.handle };
+  uint32_t strides[4] = { fb0.pitch };
+  uint32_t offsets[4] = { 0 };
+  int ret = drmModeAddFB2(drm_fd, H_RES, V_RES, DRM_FORMAT_RGB565, handles, strides, offsets, &fb0_id, 0);
+  if (ret != 0){
+    perror("drmModeAddFB2 failed to create failbuffer");
+    goto drm_resources_conn_fb0_dumb_cleanup;
+  }
+
+
+ /* prepare mapping fb0*/
+
+  struct drm_mode_map_dumb map = { .handle = fb0.handle };
+        ret = drmIoctl(drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
+        if (ret < 0) {
+                perror("DRM_IOCTL_MODE_MAP_DUMB failed to preapare map");
+                goto drm_resources_conn_fb0_cleanup;
+        }
+
+        fb0_data = mmap(0, fb0.size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                drm_fd, map.offset);
+        if (fb0_data == 0) {
+                perror("mmap failed");
+                goto drm_resources_conn_fb0_cleanup;
+        }
+
+        memset(fb0_data, 0xff, fb0.size);
+
+
+  /* save old connection and perfom the modeset*/
+  saved = drmModeGetCrtc(drm_fd, crtc);
+
+  ret = drmModeSetCrtc(drm_fd, crtc, fb0_id, 0, 0, &drm_conn->connector_id, 1, &drm_conn->modes[0]);
+        if (ret < 0) {
+                perror("drmModeSetCrtc could net set the mode");
+        }
+
+
+  /* done, now clean and return */
+
+  drmModeFreeResources(resources);
+  return true;
+
+  /**** cleanup only reachable with goto: *******/
+
+drm_resources_conn_fb0_fb1_cleanup:
+
+drm_resources_conn_fb0_fb1_dumb_cleanup:
+
+drm_resources_conn_fb0_cleanup:
+  drmModeRmFB(drm_fd, fb0_id);
+drm_resources_conn_fb0_dumb_cleanup:
+  struct drm_mode_destroy_dumb destroy = { .handle = fb0.handle };
+  drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+drm_resources_conn_cleanup:
+  drmModeFreeConnector(drm_conn);
+drm_resources_cleanup:
+  drmModeFreeResources(resources);
+
+  return false;
+}
+
+void cleanup_drm(void){
+
+  /* fb0 */
+
+  if (fb0_data != 0){
+    munmap(fb0_data, fb0.size); fb0_data = NULL;
+    drmModeRmFB(drm_fd, fb0_id);
+    struct drm_mode_destroy_dumb destroy = { .handle = fb0.handle };
+    drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+    puts("\tcleaned up fb0");
+  }
+
+  /* restore saved mode */
+
+  if (saved != NULL){
+    drmModeSetCrtc(drm_fd, saved->crtc_id, saved->buffer_id,saved->x, saved->y, &drm_conn->connector_id, 1, &saved->mode);
+    drmModeFreeCrtc(saved); saved = NULL;
+    puts("\trestored saved mode");
+  }
+
+  /* connector */
+
+  if (drm_conn != NULL){
+    drmModeFreeConnector(drm_conn); drm_conn = NULL;
+    puts("\tFreed connector");
+  }
+
+}
+
+
+/* borrowed code from: https://github.com/ascent12/drm_doc/blob/master/02_modesetting/src/main.c#L46
+ see LICENSE_DRM_DOC
+*/
+
+static uint32_t find_crtc(int drm_fd, drmModeRes *res, drmModeConnector *conn,
+                uint32_t *taken_crtcs)
+{
+        for (int i = 0; i < conn->count_encoders; ++i) {
+                drmModeEncoder *enc = drmModeGetEncoder(drm_fd, conn->encoders[i]);
+                if (!enc)
+                        continue;
+
+                for (int i = 0; i < res->count_crtcs; ++i) {
+                        uint32_t bit = 1 << i;
+                        // Not compatible
+                        if ((enc->possible_crtcs & bit) == 0)
+                                continue;
+
+                        // Already taken
+                        if (*taken_crtcs & bit)
+                                continue;
+
+                        drmModeFreeEncoder(enc);
+                        *taken_crtcs |= bit;
+                        return res->crtcs[i];
+                }
+
+                drmModeFreeEncoder(enc);
+        }
+
+        return 0;
 }
