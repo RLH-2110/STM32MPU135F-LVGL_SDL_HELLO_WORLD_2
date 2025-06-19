@@ -183,6 +183,7 @@ uint32_t fb1_id;
 uint32_t back_fb;
 uint32_t front_fb;
 
+volatile sig_atomic_t waitForFlip = 0;
 drmModeCrtc *saved = NULL;
 
 static void page_flip_handler(int drm_fd, unsigned sequence, unsigned tv_sec,	unsigned tv_usec, void *data)
@@ -194,10 +195,15 @@ static void page_flip_handler(int drm_fd, unsigned sequence, unsigned tv_sec,	un
   uint8_t *tmp_fb_data = front_fb_data;
   front_fb_data = back_fb_data;
   back_fb_data = tmp_fb_data;
+
+  waitForFlip = 0;
 }
 
 void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
+    while(waitForFlip)
+      ; /* do nothing while we wait */ 
+
     uint8_t * buff8 = px_map; /* 16 bit (RGB565) */
     int32_t area_width = (area->x2 - area->x1 + 1) * BYTES_PER_PIXEL;
     int32_t x,y;
@@ -208,10 +214,13 @@ void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
         buff8 += area_width;
     }
 
-    lv_display_flush_ready(display);
+    waitForFlip = 1;
 
+    lv_display_flush_ready(display);
+    
     if (drmModePageFlip( 	drm_fd,	crtc, back_fb, DRM_MODE_PAGE_FLIP_EVENT, NULL) != 0){
       perror("PageFLip in flush_cb");
+      waitForFlip = 0;
     } 	
 
 }
