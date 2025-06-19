@@ -10,7 +10,8 @@
 #include <sys/mman.h>
 
 #include "lvgl/lvgl.h"
-#include "lvgl/src/drivers/sdl/lv_sdl_mouse.h"
+#include "lvgl/src/drivers/evdev/lv_evdev.h"
+
 
 #define LV_FONT_MONTSERRAT_24 1
 
@@ -180,15 +181,15 @@ drmModeCrtc *saved = NULL;
 
 void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
-    uint16_t * buff16 = (uint16_t *)px_map; /* 16 bit (RGB565) */
+    uint8_t * buff8 = px_map; /* 16 bit (RGB565) */
     int32_t x, y;
+    int32_t area_width = (area->x2 - area->x1 + 1) * BYTES_PER_PIXEL;
+    //printf("\n\nwidth: %d\nx1: %d\nx2: %d\ny1: %d\ny2: %d\n",area_width,area->x1, area->x2, area->y1, area->y2);
+
     for(y = area->y1; y <= area->y2; y++) {
-        for(x = area->x1; x <= area->x2; x++) {
-            int32_t yOffset = H_RES * y * BYTES_PER_PIXEL;
-            fb0_data[x + yOffset + 0] = (*buff16 & 0xFF00) >> 8;
-            fb0_data[x + yOffset + 1] =  *buff16 & 0x00FF;
-            buff16++;
-        }
+        uint8_t *dest = fb0_data + (fb0.pitch * y) + (area->x1 * BYTES_PER_PIXEL);
+        memcpy( dest , buff8, area_width);
+        buff8 += area_width;
     }
 
     lv_display_flush_ready(display);
@@ -241,10 +242,10 @@ int main(){
 
   static uint8_t displayBuff1[DISPLAY_BUFF_SIZE];
   static uint8_t displayBuff2[DISPLAY_BUFF_SIZE];
-  lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_DIRECT);
+  lv_display_set_buffers(disp, displayBuff1, displayBuff2, DISPLAY_BUFF_SIZE, LV_DISPLAY_RENDER_MODE_FULL);
 
 
-  //lvMouse = lv_sdl_mouse_create();
+  lvMouse = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0");
 
   LV_IMAGE_DECLARE(examplePersonImg);  
 
@@ -284,8 +285,8 @@ int main(){
   pthread_join(fakeLoadrThread,NULL);
   pthread_join(tickThread,NULL);
   puts("counter joined");
-  //lv_indev_delete(lvMouse);
-  //puts("\"mouse\" deleted");
+  lv_indev_delete(lvMouse);
+  puts("\"mouse\" deleted");
   lv_disp_remove(disp);
   puts("display removed");
   lv_deinit();
