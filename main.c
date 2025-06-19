@@ -170,31 +170,51 @@ drmModeConnector *drm_conn = NULL;
 uint32_t crtc = 0;
 int drm_fd = -1;
 
-uint8_t *fb0_data;
-uint8_t *fb1_data;
+
+uint8_t *fb0_data = NULL;
+uint8_t *fb1_data = NULL;
+uint8_t *back_fb_data = NULL;
+uint8_t *front_fb_data = NULL;
+
 struct drm_mode_create_dumb fb0;
 struct drm_mode_create_dumb fb1;
 uint32_t fb0_id;
 uint32_t fb1_id;
+uint32_t back_fb;
+uint32_t front_fb;
 
 drmModeCrtc *saved = NULL;
+
+static void page_flip_handler(int drm_fd, unsigned sequence, unsigned tv_sec,	unsigned tv_usec, void *data)
+{
+  uint32_t tmp_fb = front_fb;
+  front_fb = back_fb;
+  back_fb = tmp_fb;
+
+  uint8_t *tmp_fb_data = front_fb_data;
+  front_fb_data = back_fb_data;
+  back_fb_data = tmp_fb_data;
+}
 
 void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
     uint8_t * buff8 = px_map; /* 16 bit (RGB565) */
-    int32_t x, y;
     int32_t area_width = (area->x2 - area->x1 + 1) * BYTES_PER_PIXEL;
-    //printf("\n\nwidth: %d\nx1: %d\nx2: %d\ny1: %d\ny2: %d\n",area_width,area->x1, area->x2, area->y1, area->y2);
+    int32_t x,y;
 
     for(y = area->y1; y <= area->y2; y++) {
-        uint8_t *dest = fb0_data + (fb0.pitch * y) + (area->x1 * BYTES_PER_PIXEL);
+        uint8_t *dest = back_fb_data + (fb0.pitch * y) + (area->x1 * BYTES_PER_PIXEL);
         memcpy( dest , buff8, area_width);
         buff8 += area_width;
     }
 
     lv_display_flush_ready(display);
-}
 
+    if (drmModePageFlip( 	drm_fd,	crtc, back_fb, DRM_MODE_PAGE_FLIP_EVENT, NULL) != 0){
+      perror("PageFLip in flush_cb");
+    } 	
+
+}
 
 int main(){
   srand(time(NULL));
@@ -858,43 +878,88 @@ bool setup_drm(void){
   fb0.bpp = BYTES_PER_PIXEL * 8;
 
   drmIoctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &fb0);
-
-  uint32_t handles[4] = { fb0.handle };
-  uint32_t strides[4] = { fb0.pitch };
-  uint32_t offsets[4] = { 0 };
-  int ret = drmModeAddFB2(drm_fd, H_RES, V_RES, DRM_FORMAT_RGB565, handles, strides, offsets, &fb0_id, 0);
-  if (ret != 0){
-    perror("drmModeAddFB2 failed to create failbuffer");
-    goto drm_resources_conn_fb0_dumb_cleanup;
+  
+  {
+    uint32_t handles[4] = { fb0.handle };
+    uint32_t strides[4] = { fb0.pitch };
+    uint32_t offsets[4] = { 0 };
+    int ret = drmModeAddFB2(drm_fd, H_RES, V_RES, DRM_FORMAT_RGB565, handles, strides, offsets, &fb0_id, 0);
+    if (ret != 0){
+      perror("drmModeAddFB2 failed to create failbuffer0");
+      goto drm_resources_conn_fb0_dumb_cleanup;
+    }
   }
-
 
  /* prepare mapping fb0*/
 
-  struct drm_mode_map_dumb map = { .handle = fb0.handle };
-        ret = drmIoctl(drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
-        if (ret < 0) {
-                perror("DRM_IOCTL_MODE_MAP_DUMB failed to preapare map");
-                goto drm_resources_conn_fb0_cleanup;
-        }
+  {
+    struct drm_mode_map_dumb map = { .handle = fb0.handle };
+    int ret = drmIoctl(drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
+    if (ret < 0) {
+      perror("DRM_IOCTL_MODE_MAP_DUMB failed to preapare map0");
+      goto drm_resources_conn_fb0_cleanup;
+    }
 
-        fb0_data = mmap(0, fb0.size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                drm_fd, map.offset);
-        if (fb0_data == 0) {
-                perror("mmap failed");
-                goto drm_resources_conn_fb0_cleanup;
-        }
+    fb0_data = mmap(0, fb0.size, PROT_READ | PROT_WRITE, MAP_SHARED,
+            drm_fd, map.offset);
+    if (fb0_data == 0) {
+      perror("mmap0 failed");
+      goto drm_resources_conn_fb0_cleanup;
+    }
 
-        memset(fb0_data, 0xff, fb0.size);
+    memset(fb0_data, 0xff, fb0.size);
+  }
 
+  /* framebuffer 1 */
+  fb1.width = H_RES;
+  fb1.height = V_RES;
+  fb1.bpp = BYTES_PER_PIXEL * 8;
+
+  drmIoctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &fb1);
+  {
+    uint32_t handles[4] = { fb1.handle };
+    uint32_t strides[4] = { fb1.pitch };
+    uint32_t offsets[4] = { 0 };
+    int ret = drmModeAddFB2(drm_fd, H_RES, V_RES, DRM_FORMAT_RGB565, handles, strides, offsets, &fb1_id, 0);
+    if (ret != 0){
+      perror("drmModeAddFB2 failed to create failbuffer1");
+      goto drm_resources_conn_fb0_fb1_dumb_cleanup;
+    }
+  }
+
+  /* prepare mapping fb1*/
+  
+  {
+    struct drm_mode_map_dumb map = { .handle = fb1.handle };
+    int ret = drmIoctl(drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
+    if (ret < 0) {
+      perror("DRM_IOCTL_MODE_MAP_DUMB failed to preapare map1");
+      goto drm_resources_conn_fb0_fb1_cleanup;
+    }
+
+    fb1_data = mmap(0, fb1.size, PROT_READ | PROT_WRITE, MAP_SHARED,
+      drm_fd, map.offset);
+    if (fb1_data == 0) {
+      perror("mmap1 failed");
+      goto drm_resources_conn_fb0_fb1_cleanup;
+    }
+
+    memset(fb1_data, 0xff, fb1.size);
+  }
+
+  /* front / back set */
+  front_fb_data = fb1_data;
+  back_fb_data = fb0_data;
+  front_fb = fb1_id;
+  back_fb = fb0_id;
 
   /* save old connection and perfom the modeset*/
   saved = drmModeGetCrtc(drm_fd, crtc);
 
-  ret = drmModeSetCrtc(drm_fd, crtc, fb0_id, 0, 0, &drm_conn->connector_id, 1, &drm_conn->modes[0]);
-        if (ret < 0) {
-                perror("drmModeSetCrtc could net set the mode");
-        }
+  int ret = drmModeSetCrtc(drm_fd, crtc, fb1_id, 0, 0, &drm_conn->connector_id, 1, &drm_conn->modes[0]);
+  if (ret < 0) {
+    perror("drmModeSetCrtc could net set the mode");
+  }
 
 
   /* done, now clean and return */
@@ -905,14 +970,19 @@ bool setup_drm(void){
   /**** cleanup only reachable with goto: *******/
 
 drm_resources_conn_fb0_fb1_cleanup:
-
+  drmModeRmFB(drm_fd, fb1_id);
 drm_resources_conn_fb0_fb1_dumb_cleanup:
-
+  {  
+    struct drm_mode_destroy_dumb destroy = { .handle = fb1.handle };
+    drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+  }
 drm_resources_conn_fb0_cleanup:
   drmModeRmFB(drm_fd, fb0_id);
 drm_resources_conn_fb0_dumb_cleanup:
-  struct drm_mode_destroy_dumb destroy = { .handle = fb0.handle };
-  drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+  {
+    struct drm_mode_destroy_dumb destroy = { .handle = fb0.handle };
+    drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+  }
 drm_resources_conn_cleanup:
   drmModeFreeConnector(drm_conn);
 drm_resources_cleanup:
@@ -931,6 +1001,16 @@ void cleanup_drm(void){
     struct drm_mode_destroy_dumb destroy = { .handle = fb0.handle };
     drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
     puts("\tcleaned up fb0");
+  }
+
+  /* fb1 */
+
+  if (fb1_data != 0){
+    munmap(fb1_data, fb1.size); fb1_data = NULL;
+    drmModeRmFB(drm_fd, fb1_id);
+    struct drm_mode_destroy_dumb destroy = { .handle = fb1.handle };
+    drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+    puts("\tcleaned up fb1");
   }
 
   /* restore saved mode */
