@@ -1,6 +1,6 @@
-# STM32MPU135F LVGL Hello world program via SDL2
+# STM32MPU135F LVGL Hello world program via DRM
 
-This is a more "advanced" hello world project for using LVGL on the STM32MPU135F with Yocto and SDL2.  
+This is a more "advanced" hello world project for using LVGL on the STM32MPU135F with Yocto and DRM.  
   
 This program has a few tabs, each with a few LVGL widgets, I think I used over 60% of all widgets.
 
