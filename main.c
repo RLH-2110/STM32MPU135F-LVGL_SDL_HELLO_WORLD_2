@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <poll.h>
+#include <errno.h>
 
 #include "lvgl/lvgl.h"
 #include "lvgl/src/drivers/evdev/lv_evdev.h"
@@ -24,6 +26,9 @@
 #define NANOSECOND_TO_MILISECOND_RATE 1000000
 #define MICROSECOND_TO_MILISECOND_RATE 1000
 
+#define DROP_FRAMES 1 /* set to 1 to drop frames that would be send while the screen is drawing, instead of busy waiting for them*/
+#define LOG_DROPPED_FRAMES 1
+
 extern const lv_font_t lv_font_montserrat_24;
 extern const lv_font_t de_font_montserrat_14;
 extern const lv_image_dsc_t examplePersonImg;
@@ -33,11 +38,14 @@ lv_display_t *disp;
 lv_indev_t *lvMouse;
 
 pthread_t tickThread;
-static void* tick_thread(void* data);
+static void *tick_thread(void* data);
 volatile sig_atomic_t noStop = 1; /* programms runs as long as this is set */
 
 pthread_t fakeLoadrThread;
-static void* load_main_screen_thread(void* data);
+static void *load_main_screen_thread(void* data);
+
+pthread_t pollDrmThread;
+static void *poll_drm_thread(void *data);
 
 /* screens */
 void fake_loading_screen(void);
@@ -201,8 +209,20 @@ static void page_flip_handler(int drm_fd, unsigned sequence, unsigned tv_sec,	un
 
 void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
-    while(waitForFlip)
-      ; /* do nothing while we wait */ 
+
+#if DROP_FRAMES
+    if (waitForFlip != 0)
+    {
+#if LOG_DROPPED_FRAMES
+      printf("dropped frame at %d\n",time(NULL));
+#endif
+      lv_display_flush_ready(display);
+      return;
+    }
+#else
+  while(waitForFlip)
+    ;
+#endif
 
     uint8_t * buff8 = px_map; /* 16 bit (RGB565) */
     int32_t area_width = (area->x2 - area->x1 + 1) * BYTES_PER_PIXEL;
@@ -213,15 +233,14 @@ void flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
         memcpy( dest , buff8, area_width);
         buff8 += area_width;
     }
-
     waitForFlip = 1;
 
-    lv_display_flush_ready(display);
-    
     if (drmModePageFlip( 	drm_fd,	crtc, back_fb, DRM_MODE_PAGE_FLIP_EVENT, NULL) != 0){
       perror("PageFLip in flush_cb");
       waitForFlip = 0;
     } 	
+
+    lv_display_flush_ready(display);
 
 }
 
@@ -789,6 +808,7 @@ bool set_calandar_dates(lv_obj_t *calendar){
   return true;
 }
 
+
 static void load_main_screen(void* data){
   main_screen();
 }
@@ -818,6 +838,12 @@ char* concat(const char *s1, const char *s2, char* buffer, size_t bufferSize)
     return buffer;
 }
 
+
+
+
+
+
+/* drm */
 
 /* false = failed | true = success */
 bool setup_drm(void){
@@ -971,9 +997,18 @@ bool setup_drm(void){
   }
 
 
+  /* clean the mode resources */
+  drmModeFreeResources(resources);
+
+  /* polling for Flip handler*/
+
+    if(pthread_create( &pollDrmThread, NULL, poll_drm_thread,NULL) != 0){
+      cleanup_drm();
+      return false; 
+    }
+
   /* done, now clean and return */
 
-  drmModeFreeResources(resources);
   return true;
 
   /**** cleanup only reachable with goto: *******/
@@ -1001,6 +1036,9 @@ drm_resources_cleanup:
 }
 
 void cleanup_drm(void){
+
+  /* polling */
+  pthread_join(pollDrmThread,NULL);
 
   /* fb0 */
 
@@ -1072,3 +1110,32 @@ static uint32_t find_crtc(int drm_fd, drmModeRes *res, drmModeConnector *conn,
 
         return 0;
 }
+
+
+static void *poll_drm_thread(void *data){
+
+  struct pollfd pollfd = {
+		.fd = drm_fd,
+		.events = POLLIN,
+	};
+
+  while(noStop){
+    int ret = poll(&pollfd, 1, 250);
+    if (ret < 0 && errno != EAGAIN) {
+      perror("poll");
+    }
+
+    if (pollfd.revents & POLLIN) {
+      drmEventContext context = {
+        .version = DRM_EVENT_CONTEXT_VERSION,
+        .page_flip_handler = page_flip_handler,
+      };
+
+      if (drmHandleEvent(drm_fd, &context) < 0) {
+        perror("drmHandleEvent");
+      }
+    }
+  }
+}
+
+
